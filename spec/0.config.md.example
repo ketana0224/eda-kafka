@@ -1,0 +1,13 @@
+# プロジェクト共通設定
+
+## 基本情報
+
+| 項目 | 値 |
+|---|---|
+| Subscription ID | `<YOUR_SUBSCRIPTION_ID>` |
+| Tenant ID | `<YOUR_TENANT_ID>` |
+| リージョン | `japaneast` |
+| 認証 | EntraID |
+| IaC | Azure CLI (PowerShell) |
+| 作成ファイル | `infra/deploy-kafka-aci.ps1`（スクリプト）, `infra/config.psd1`（設定） |
+| Containerイメージ | `apache/kafka:latest`（Docker Hub） |
