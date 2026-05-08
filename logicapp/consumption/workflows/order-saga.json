@@ -1,0 +1,225 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "kafkaPublisherUrl":    { "type": "String", "defaultValue": "" },
+    "orderServiceUrl":      { "type": "String", "defaultValue": "" },
+    "callbackRegistrarUrl": { "type": "String", "defaultValue": "" }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "customerId":      { "type": "string" },
+            "shippingAddress": { "type": "string" },
+            "items":           { "type": "array" },
+            "totalAmount":     { "type": "number" }
+          },
+          "required": ["customerId", "items"]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Create_Order": {
+      "type": "Http",
+      "runAfter": {},
+      "inputs": {
+        "method": "POST",
+        "uri": "@{concat(parameters('orderServiceUrl'), '/api/orders')}",
+        "headers": { "Content-Type": "application/json" },
+        "body": "@triggerBody()"
+      }
+    },
+    "Parse_Order_Response": {
+      "type": "ParseJson",
+      "runAfter": { "Create_Order": ["Succeeded"] },
+      "inputs": {
+        "content": "@body('Create_Order')",
+        "schema": {
+          "type": "object",
+          "properties": { "orderId": { "type": "string" } }
+        }
+      }
+    },
+    "Send_Response": {
+      "type": "Response",
+      "runAfter": { "Parse_Order_Response": ["Succeeded"] },
+      "inputs": {
+        "statusCode": 202,
+        "body": {
+          "runId":   "@{workflow().run.name}",
+          "orderId": "@{body('Parse_Order_Response')['orderId']}",
+          "status":  "accepted"
+        }
+      }
+    },
+    "Publish_InventoryReserveCommand": {
+      "type": "Http",
+      "runAfter": { "Send_Response": ["Succeeded"] },
+      "inputs": {
+        "method": "POST",
+        "uri": "@parameters('kafkaPublisherUrl')",
+        "headers": { "Content-Type": "application/json" },
+        "body": {
+          "topic": "inventory.reserve.command",
+          "key":   "@{body('Parse_Order_Response')['orderId']}",
+          "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"items\":', string(triggerBody()['items']), ',\"orchestrationId\":\"', concat(workflow().run.name, '-inv'), '\",\"issuedAt\":\"', utcNow(), '\"}')}"
+        }
+      }
+    },
+    "Wait_For_InventoryResponse": {
+      "type": "HttpWebhook",
+      "runAfter": { "Publish_InventoryReserveCommand": ["Succeeded"] },
+      "inputs": {
+        "subscribe": {
+          "method": "POST",
+          "uri": "@parameters('callbackRegistrarUrl')",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "orchestrationId": "@{concat(workflow().run.name, '-inv')}",
+            "callbackUrl":     "@{listCallbackUrl()}"
+          }
+        },
+        "unsubscribe": {}
+      },
+      "limit": { "timeout": "PT30M" }
+    },
+    "Check_Inventory_Success": {
+      "type": "If",
+      "runAfter": {
+        "Wait_For_InventoryResponse": ["Succeeded", "Failed", "TimedOut", "Skipped"]
+      },
+      "expression": {
+        "and": [{ "equals": ["@actions('Wait_For_InventoryResponse')['status']", "Succeeded"] }]
+      },
+      "actions": {
+        "Publish_ShippingScheduleCommand": {
+          "type": "Http",
+          "runAfter": {},
+          "inputs": {
+            "method": "POST",
+            "uri": "@parameters('kafkaPublisherUrl')",
+            "headers": { "Content-Type": "application/json" },
+            "body": {
+              "topic": "shipping.schedule.command",
+              "key":   "@{body('Parse_Order_Response')['orderId']}",
+              "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"shippingAddress\":\"', triggerBody()['shippingAddress'], '\",\"orchestrationId\":\"', concat(workflow().run.name, '-ship'), '\",\"issuedAt\":\"', utcNow(), '\"}')}"
+            }
+          }
+        },
+        "Wait_For_ShippingResponse": {
+          "type": "HttpWebhook",
+          "runAfter": { "Publish_ShippingScheduleCommand": ["Succeeded"] },
+          "inputs": {
+            "subscribe": {
+              "method": "POST",
+              "uri": "@parameters('callbackRegistrarUrl')",
+              "headers": { "Content-Type": "application/json" },
+              "body": {
+                "orchestrationId": "@{concat(workflow().run.name, '-ship')}",
+                "callbackUrl":     "@{listCallbackUrl()}"
+              }
+            },
+            "unsubscribe": {}
+          },
+          "limit": { "timeout": "PT30M" }
+        },
+        "Check_Shipping_Success": {
+          "type": "If",
+          "runAfter": {
+            "Wait_For_ShippingResponse": ["Succeeded", "Failed", "TimedOut", "Skipped"]
+          },
+          "expression": {
+            "and": [{ "equals": ["@actions('Wait_For_ShippingResponse')['status']", "Succeeded"] }]
+          },
+          "actions": {
+            "Publish_OrderConfirmed": {
+              "type": "Http",
+              "runAfter": {},
+              "inputs": {
+                "method": "POST",
+                "uri": "@parameters('kafkaPublisherUrl')",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "topic": "order.confirmed",
+                  "key":   "@{body('Parse_Order_Response')['orderId']}",
+                  "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"orchestrationId\":\"', workflow().run.name, '\",\"occurredAt\":\"', utcNow(), '\"}')}"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Publish_InventoryReleaseCommand_OnShipFail": {
+                "type": "Http",
+                "runAfter": {},
+                "inputs": {
+                  "method": "POST",
+                  "uri": "@parameters('kafkaPublisherUrl')",
+                  "headers": { "Content-Type": "application/json" },
+                  "body": {
+                    "topic": "inventory.release.command",
+                    "key":   "@{body('Parse_Order_Response')['orderId']}",
+                    "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"orchestrationId\":\"', workflow().run.name, '\",\"issuedAt\":\"', utcNow(), '\"}')}" 
+                  }
+                }
+              },
+              "Publish_OrderCancelled_OnShipFail": {
+                "type": "Http",
+                "runAfter": { "Publish_InventoryReleaseCommand_OnShipFail": ["Succeeded"] },
+                "inputs": {
+                  "method": "POST",
+                  "uri": "@parameters('kafkaPublisherUrl')",
+                  "headers": { "Content-Type": "application/json" },
+                  "body": {
+                    "topic": "order.cancelled",
+                    "key":   "@{body('Parse_Order_Response')['orderId']}",
+                    "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"orchestrationId\":\"', workflow().run.name, '\",\"occurredAt\":\"', utcNow(), '\"}')}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Publish_InventoryReleaseCommand_OnInvFail": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "@parameters('kafkaPublisherUrl')",
+              "headers": { "Content-Type": "application/json" },
+              "body": {
+                "topic": "inventory.release.command",
+                "key":   "@{body('Parse_Order_Response')['orderId']}",
+                "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"orchestrationId\":\"', workflow().run.name, '\",\"issuedAt\":\"', utcNow(), '\"}')}" 
+              }
+            }
+          },
+          "Publish_OrderCancelled_OnInvFail": {
+            "type": "Http",
+            "runAfter": { "Publish_InventoryReleaseCommand_OnInvFail": ["Succeeded"] },
+            "inputs": {
+              "method": "POST",
+              "uri": "@parameters('kafkaPublisherUrl')",
+              "headers": { "Content-Type": "application/json" },
+              "body": {
+                "topic": "order.cancelled",
+                "key":   "@{body('Parse_Order_Response')['orderId']}",
+                "value": "@{concat('{\"orderId\":\"', body('Parse_Order_Response')['orderId'], '\",\"orchestrationId\":\"', workflow().run.name, '\",\"occurredAt\":\"', utcNow(), '\"}')}" 
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

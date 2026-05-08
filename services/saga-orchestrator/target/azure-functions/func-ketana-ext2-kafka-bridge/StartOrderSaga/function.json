@@ -1,0 +1,20 @@
+{
+  "scriptFile" : "../saga-orchestrator-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.example.saga.HttpTriggerFunction.startOrderSaga",
+  "bindings" : [ {
+    "type" : "httpTrigger",
+    "direction" : "in",
+    "name" : "req",
+    "route" : "orders",
+    "methods" : [ "POST" ],
+    "authLevel" : "ANONYMOUS"
+  }, {
+    "type" : "durableClient",
+    "direction" : "in",
+    "name" : "durableClient"
+  }, {
+    "type" : "http",
+    "direction" : "out",
+    "name" : "$return"
+  } ]
+}

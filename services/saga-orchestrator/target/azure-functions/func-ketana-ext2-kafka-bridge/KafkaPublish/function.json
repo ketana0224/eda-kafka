@@ -1,0 +1,16 @@
+{
+  "scriptFile" : "../saga-orchestrator-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.example.saga.KafkaPublisherFunction.kafkaPublish",
+  "bindings" : [ {
+    "type" : "httpTrigger",
+    "direction" : "in",
+    "name" : "req",
+    "route" : "kafka/publish",
+    "methods" : [ "POST" ],
+    "authLevel" : "ANONYMOUS"
+  }, {
+    "type" : "http",
+    "direction" : "out",
+    "name" : "$return"
+  } ]
+}

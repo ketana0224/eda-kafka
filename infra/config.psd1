@@ -7,4 +7,9 @@
     KafkaImage     = "apache/kafka:latest"
     CpuCores       = 1
     MemoryGb       = 2
+    # Claim Check パターン用
+    StorageAccount = "stketanaedakafka"
+    BlobContainer  = "claim-check"
+    AcaEnvironment = "aca-env-ketana-eda-kafka"
+    AcaAppName     = "aca-claim-check"
 }

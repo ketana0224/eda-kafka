@@ -1,0 +1,92 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "When_messages_are_available_on_a_topic": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "topicName": "shipping.scheduled",
+            "consumerGroup": "logic-app-consumer"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "kafka",
+            "operationId": "receiveTopic",
+            "serviceProviderId": "/serviceProviders/kafka"
+          }
+        },
+        "kind": "Stateful"
+      }
+    },
+    "actions": {
+      "Parse_Kafka_Message": {
+        "type": "ParseJson",
+        "inputs": {
+          "content": "@triggerBody()['content']",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "eventType":       { "type": "string" },
+              "orderId":         { "type": "string" },
+              "orchestrationId": { "type": "string" },
+              "shippingId":      { "type": "string" },
+              "occurredAt":      { "type": "string" }
+            }
+          }
+        },
+        "runAfter": {}
+      },
+      "Get_CallbackUrl": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "tableName":    "CallbackUrls",
+            "partitionKey": "cb",
+            "rowKey":       "@{body('Parse_Kafka_Message')['orchestrationId']}"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "AzureTables",
+            "operationId": "getEntity",
+            "serviceProviderId": "/serviceProviders/AzureTables"
+          }
+        },
+        "runAfter": { "Parse_Kafka_Message": ["Succeeded"] }
+      },
+      "Resume_Orchestrator": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "@{body('Get_CallbackUrl')['callbackUrl']}",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "orchestrationId": "@{body('Parse_Kafka_Message')['orchestrationId']}",
+            "orderId":         "@{body('Parse_Kafka_Message')['orderId']}",
+            "shippingId":      "@{body('Parse_Kafka_Message')['shippingId']}",
+            "success":         true,
+            "eventType":       "ShippingScheduled"
+          }
+        },
+        "runAfter": { "Get_CallbackUrl": ["Succeeded"] }
+      },
+      "Delete_CallbackUrl": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "tableName":    "CallbackUrls",
+            "partitionKey": "cb",
+            "rowKey":       "@{body('Parse_Kafka_Message')['orchestrationId']}"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "AzureTables",
+            "operationId": "deleteEntity",
+            "serviceProviderId": "/serviceProviders/AzureTables"
+          }
+        },
+        "runAfter": { "Resume_Orchestrator": ["Succeeded"] }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

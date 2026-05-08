@@ -1,0 +1,13 @@
+{
+  "scriptFile" : "../saga-orchestrator-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.example.saga.KafkaConsumerFunctionsLA.inventoryReservationFailedBridge",
+  "bindings" : [ {
+    "type" : "kafkaTrigger",
+    "direction" : "in",
+    "name" : "kafkaTrigger",
+    "dataType" : "string",
+    "topic" : "inventory.reservation.failed",
+    "consumerGroup" : "saga-la-bridge",
+    "brokerList" : "%KAFKA_BOOTSTRAP_SERVERS%"
+  } ]
+}

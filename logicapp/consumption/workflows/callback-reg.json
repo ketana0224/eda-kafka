@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "cosmosDbEndpoint": { "type": "String", "defaultValue": "" }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "orchestrationId": { "type": "string" },
+            "callbackUrl":     { "type": "string" }
+          },
+          "required": ["orchestrationId", "callbackUrl"]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Upsert_CallbackUrl": {
+      "type": "Http",
+      "runAfter": {},
+      "inputs": {
+        "method": "PUT",
+        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', triggerBody()['orchestrationId'])}",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-ms-documentdb-partitionkey": "@{concat('[\"', triggerBody()['orchestrationId'], '\"]')}",
+          "x-ms-documentdb-is-upsert": "true"
+        },
+        "body": {
+          "id":              "@{triggerBody()['orchestrationId']}",
+          "orchestrationId": "@{triggerBody()['orchestrationId']}",
+          "callbackUrl":     "@{triggerBody()['callbackUrl']}"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://cosmos.azure.com"
+        }
+      }
+    },
+    "Response_OK": {
+      "type": "Response",
+      "runAfter": { "Upsert_CallbackUrl": ["Succeeded"] },
+      "inputs": { "statusCode": 200 }
+    }
+  },
+  "outputs": {}
+}

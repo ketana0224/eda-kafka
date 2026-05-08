@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.example</groupId>
+  <artifactId>saga-orchestrator</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <functionAppName>func-ketana-ext2-saga-orch</functionAppName>
+    <functionAppResourceGroup>rg-ketana-ext2-eda-kafka</functionAppResourceGroup>
+    <functionAppRegion>japanwest</functionAppRegion>
+    <azure.functions.maven.plugin.version>1.38.0</azure.functions.maven.plugin.version>
+    <azure.functions.java.library.version>3.1.0</azure.functions.java.library.version>
+    <durabletask.version>1.5.1</durabletask.version>
+    <kafka.clients.version>3.7.0</kafka.clients.version>
+    <jackson.version>2.17.0</jackson.version>
+  </properties>
+
+  <dependencies>
+    <!-- Azure Functions Java SDK -->
+    <dependency>
+      <groupId>com.microsoft.azure.functions</groupId>
+      <artifactId>azure-functions-java-library</artifactId>
+      <version>${azure.functions.java.library.version}</version>
+    </dependency>
+
+    <!-- Durable Functions Java SDK -->
+    <dependency>
+      <groupId>com.microsoft</groupId>
+      <artifactId>durabletask-azure-functions</artifactId>
+      <version>${durabletask.version}</version>
+    </dependency>
+
+    <!-- Kafka Producer (Activity から Kafka コマンドを発行) -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>${kafka.clients.version}</version>
+    </dependency>
+
+    <!-- JSON シリアライズ / デシリアライズ -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+        </configuration>
+      </plugin>
+
+      <!-- Azure Functions Maven Plugin: mvn azure-functions:package / deploy -->
+      <plugin>
+        <groupId>com.microsoft.azure</groupId>
+        <artifactId>azure-functions-maven-plugin</artifactId>
+        <version>${azure.functions.maven.plugin.version}</version>
+        <configuration>
+          <appName>${functionAppName}</appName>
+          <resourceGroup>${functionAppResourceGroup}</resourceGroup>
+          <region>${functionAppRegion}</region>
+          <runtime>
+            <os>linux</os>
+            <javaVersion>21</javaVersion>
+          </runtime>
+          <appSettings>
+            <property>
+              <name>FUNCTIONS_EXTENSION_VERSION</name>
+              <value>~4</value>
+            </property>
+          </appSettings>
+        </configuration>
+        <executions>
+          <execution>
+            <id>package-functions</id>
+            <goals>
+              <goal>package</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- func-ketana-ext2-kafka-bridge 向け: Durable 不要なので durableTask なしの host.json を使う -->
+    <profile>
+      <id>bridge</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.microsoft.azure</groupId>
+            <artifactId>azure-functions-maven-plugin</artifactId>
+            <version>${azure.functions.maven.plugin.version}</version>
+            <configuration>
+              <hostJson>${project.basedir}/host-bridge.json</hostJson>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "cosmosDbEndpoint": { "type": "String", "defaultValue": "" }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "eventType":      { "type": "string" },
+            "orderId":        { "type": "string" },
+            "orchestrationId":{ "type": "string" },
+            "reservedItems":  { "type": "array" },
+            "occurredAt":     { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "actions": {
+    "Parse_Kafka_Message": {
+      "type": "ParseJson",
+      "runAfter": {},
+      "inputs": {
+        "content": "@triggerBody()",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "eventType":       { "type": "string" },
+            "orderId":         { "type": "string" },
+            "orchestrationId": { "type": "string" },
+            "reservedItems":   { "type": "array" },
+            "occurredAt":      { "type": "string" }
+          }
+        }
+      }
+    },
+    "Get_CallbackUrl": {
+      "type": "Http",
+      "runAfter": { "Parse_Kafka_Message": ["Succeeded"] },
+      "inputs": {
+        "method": "GET",
+        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', body('Parse_Kafka_Message')['orchestrationId'])}",
+        "headers": {
+          "x-ms-documentdb-partitionkey": "@{concat('[\"', body('Parse_Kafka_Message')['orchestrationId'], '\"]')}"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://cosmos.azure.com"
+        }
+      }
+    },
+    "Resume_Orchestrator": {
+      "type": "Http",
+      "runAfter": { "Get_CallbackUrl": ["Succeeded"] },
+      "inputs": {
+        "method": "POST",
+        "uri": "@{body('Get_CallbackUrl')['callbackUrl']}",
+        "headers": { "Content-Type": "application/json" },
+        "body": {
+          "orchestrationId": "@{body('Parse_Kafka_Message')['orchestrationId']}",
+          "orderId":         "@{body('Parse_Kafka_Message')['orderId']}",
+          "success":         true,
+          "eventType":       "InventoryReserved"
+        }
+      }
+    },
+    "Delete_CallbackUrl": {
+      "type": "Http",
+      "runAfter": { "Resume_Orchestrator": ["Succeeded"] },
+      "inputs": {
+        "method": "DELETE",
+        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', body('Parse_Kafka_Message')['orchestrationId'])}",
+        "headers": {
+          "x-ms-documentdb-partitionkey": "@{concat('[\"', body('Parse_Kafka_Message')['orchestrationId'], '\"]')}"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://cosmos.azure.com"
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

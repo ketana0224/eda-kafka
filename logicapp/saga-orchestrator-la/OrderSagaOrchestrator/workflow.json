@@ -1,0 +1,264 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "manual": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "customerId":      { "type": "string" },
+              "shippingAddress": { "type": "string" },
+              "items":           { "type": "array"  },
+              "totalAmount":     { "type": "number" }
+            },
+            "required": ["customerId", "items"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Create_Order": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "@{concat(appsetting('ORDER_SERVICE_URL'), '/api/orders')}",
+          "headers": { "Content-Type": "application/json" },
+          "body": "@triggerBody()"
+        },
+        "runAfter": {}
+      },
+      "Parse_Order_Response": {
+        "type": "ParseJson",
+        "inputs": {
+          "content": "@body('Create_Order')",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "orderId": { "type": "string" }
+            }
+          }
+        },
+        "runAfter": { "Create_Order": ["Succeeded"] }
+      },
+      "Send_Response": {
+        "type": "Response",
+        "inputs": {
+          "statusCode": 202,
+          "body": {
+            "runId":   "@{workflow().run.name}",
+            "orderId": "@{body('Parse_Order_Response')['orderId']}",
+            "status":  "accepted"
+          }
+        },
+        "runAfter": { "Parse_Order_Response": ["Succeeded"] }
+      },
+      "Publish_InventoryReserveCommand": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "topicName": "inventory.reserve.command",
+            "message": {
+              "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'items', triggerBody()['items'], 'orchestrationId', concat(workflow().run.name, '-inv'), 'issuedAt', utcNow()))}"
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "kafka",
+            "operationId": "publishMessage",
+            "serviceProviderId": "/serviceProviders/kafka"
+          }
+        },
+        "runAfter": { "Send_Response": ["Succeeded"] }
+      },
+      "Wait_For_InventoryResponse": {
+        "type": "HttpWebhook",
+        "inputs": {
+          "subscribe": {
+            "method": "POST",
+            "uri": "@appsetting('CALLBACK_REGISTRAR_URL')",
+            "headers": { "Content-Type": "application/json" },
+            "body": {
+              "orchestrationId": "@{concat(workflow().run.name, '-inv')}",
+              "callbackUrl": "@{listCallbackUrl()}"
+            }
+          },
+          "unsubscribe": {}
+        },
+        "limit": { "timeout": "PT30M" },
+        "runAfter": { "Publish_InventoryReserveCommand": ["Succeeded"] }
+      },
+      "Check_Inventory_Success": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@actions('Wait_For_InventoryResponse')['status']",
+                "Succeeded"
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Publish_ShippingScheduleCommand": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "topicName": "shipping.schedule.command",
+                "message": {
+                  "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'shippingAddress', triggerBody()['shippingAddress'], 'orchestrationId', concat(workflow().run.name, '-ship'), 'issuedAt', utcNow()))}"
+                }
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "kafka",
+                "operationId": "publishMessage",
+                "serviceProviderId": "/serviceProviders/kafka"
+              }
+            },
+            "runAfter": {}
+          },
+          "Wait_For_ShippingResponse": {
+            "type": "HttpWebhook",
+            "inputs": {
+              "subscribe": {
+                "method": "POST",
+                "uri": "@appsetting('CALLBACK_REGISTRAR_URL')",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "orchestrationId": "@{concat(workflow().run.name, '-ship')}",
+                  "callbackUrl": "@{listCallbackUrl()}"
+                }
+              },
+              "unsubscribe": {}
+            },
+            "limit": { "timeout": "PT30M" },
+            "runAfter": { "Publish_ShippingScheduleCommand": ["Succeeded"] }
+          },
+          "Check_Shipping_Success": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "equals": [
+                    "@actions('Wait_For_ShippingResponse')['status']",
+                    "Succeeded"
+                  ]
+                }
+              ]
+            },
+            "actions": {
+              "Publish_OrderConfirmed": {
+                "type": "ServiceProvider",
+                "inputs": {
+                  "parameters": {
+                    "topicName": "order.confirmed",
+                    "message": {
+                      "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'orchestrationId', workflow().run.name, 'occurredAt', utcNow()))}"
+                    }
+                  },
+                  "serviceProviderConfiguration": {
+                    "connectionName": "kafka",
+                    "operationId": "publishMessage",
+                    "serviceProviderId": "/serviceProviders/kafka"
+                  }
+                },
+                "runAfter": {}
+              }
+            },
+            "else": {
+              "actions": {
+                "Publish_InventoryReleaseCommand_OnShipFail": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "topicName": "inventory.release.command",
+                      "message": {
+                        "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'orchestrationId', workflow().run.name, 'issuedAt', utcNow()))}"
+                      }
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "kafka",
+                      "operationId": "publishMessage",
+                      "serviceProviderId": "/serviceProviders/kafka"
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Publish_OrderCancelled_OnShipFail": {
+                  "type": "ServiceProvider",
+                  "inputs": {
+                    "parameters": {
+                      "topicName": "order.cancelled",
+                      "message": {
+                        "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'orchestrationId', workflow().run.name, 'occurredAt', utcNow()))}"
+                      }
+                    },
+                    "serviceProviderConfiguration": {
+                      "connectionName": "kafka",
+                      "operationId": "publishMessage",
+                      "serviceProviderId": "/serviceProviders/kafka"
+                    }
+                  },
+                  "runAfter": {
+                    "Publish_InventoryReleaseCommand_OnShipFail": ["Succeeded"]
+                  }
+                }
+              }
+            },
+            "runAfter": {
+              "Wait_For_ShippingResponse": ["Succeeded", "Failed", "TimedOut", "Skipped"]
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Publish_InventoryReleaseCommand_OnInvFail": {
+              "type": "ServiceProvider",
+              "inputs": {
+                "parameters": {
+                  "topicName": "inventory.release.command",
+                  "message": {
+                    "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'orchestrationId', workflow().run.name, 'issuedAt', utcNow()))}"
+                  }
+                },
+                "serviceProviderConfiguration": {
+                  "connectionName": "kafka",
+                  "operationId": "publishMessage",
+                  "serviceProviderId": "/serviceProviders/kafka"
+                }
+              },
+              "runAfter": {}
+            },
+            "Publish_OrderCancelled_OnInvFail": {
+              "type": "ServiceProvider",
+              "inputs": {
+                "parameters": {
+                  "topicName": "order.cancelled",
+                  "message": {
+                    "content": "@{string(createObject('orderId', body('Parse_Order_Response')['orderId'], 'orchestrationId', workflow().run.name, 'occurredAt', utcNow()))}"
+                  }
+                },
+                "serviceProviderConfiguration": {
+                  "connectionName": "kafka",
+                  "operationId": "publishMessage",
+                  "serviceProviderId": "/serviceProviders/kafka"
+                }
+              },
+              "runAfter": {
+                "Publish_InventoryReleaseCommand_OnInvFail": ["Succeeded"]
+              }
+            }
+          }
+        },
+        "runAfter": {
+          "Wait_For_InventoryResponse": ["Succeeded", "Failed", "TimedOut", "Skipped"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

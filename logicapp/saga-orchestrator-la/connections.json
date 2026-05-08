@@ -1,0 +1,23 @@
+{
+  "managedApiConnections": {},
+  "serviceProviderConnections": {
+    "kafka": {
+      "parameterValues": {
+        "bootstrapServers": "@appsetting('KAFKA_BOOTSTRAP_SERVERS')",
+        "authType": "no_auth"
+      },
+      "serviceProvider": {
+        "id": "/serviceProviders/kafka"
+      }
+    },
+    "AzureTables": {
+      "parameterValues": {
+        "storageAccount": "stketanaext2la",
+        "authType": "managedidentity"
+      },
+      "serviceProvider": {
+        "id": "/serviceProviders/AzureTables"
+      }
+    }
+  }
+}

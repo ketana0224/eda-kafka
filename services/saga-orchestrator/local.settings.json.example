@@ -1,0 +1,13 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "<Storage Account 接続文字列>",
+    "FUNCTIONS_WORKER_RUNTIME": "java",
+    "KAFKA_BOOTSTRAP_SERVERS": "20.210.80.7:9092",
+    "ORDER_SERVICE_URL": "http://localhost:8081",
+    "SAGA_TIMEOUT_MINUTES": "30",
+    "LOGIC_APP_INV_RESERVED_URL": "https://prod-xx.japaneast.logic.azure.com:443/workflows/.../triggers/manual/run?api-version=2016-10-01&sp=...",
+    "LOGIC_APP_INV_FAILED_URL": "https://prod-xx.japaneast.logic.azure.com:443/workflows/.../triggers/manual/run?api-version=2016-10-01&sp=...",
+    "LOGIC_APP_SHIP_SCHED_URL": "https://prod-xx.japaneast.logic.azure.com:443/workflows/.../triggers/manual/run?api-version=2016-10-01&sp=..."
+  }
+}

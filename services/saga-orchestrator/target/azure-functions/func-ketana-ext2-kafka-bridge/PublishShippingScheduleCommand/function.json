@@ -1,0 +1,9 @@
+{
+  "scriptFile" : "../saga-orchestrator-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.example.saga.ActivityFunctions.publishShippingScheduleCommand",
+  "bindings" : [ {
+    "type" : "activityTrigger",
+    "direction" : "in",
+    "name" : "taskActivityContext"
+  } ]
+}

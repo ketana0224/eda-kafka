@@ -1,0 +1,52 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "manual": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "orchestrationId": { "type": "string" },
+              "callbackUrl":     { "type": "string" }
+            },
+            "required": ["orchestrationId", "callbackUrl"]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Upsert_CallbackUrl": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "tableName": "CallbackUrls",
+            "entity": {
+              "PartitionKey": "cb",
+              "RowKey":       "@{triggerBody()['orchestrationId']}",
+              "callbackUrl":  "@{triggerBody()['callbackUrl']}"
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "AzureTables",
+            "operationId": "upsertEntity",
+            "serviceProviderId": "/serviceProviders/AzureTables"
+          }
+        },
+        "runAfter": {}
+      },
+      "Response_OK": {
+        "type": "Response",
+        "inputs": {
+          "statusCode": 200
+        },
+        "runAfter": { "Upsert_CallbackUrl": ["Succeeded"] }
+      }
+    },
+    "outputs": {}
+  },
+  "kind": "Stateful"
+}

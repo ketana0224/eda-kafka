@@ -1,0 +1,17 @@
+{
+  "scriptFile" : "../saga-orchestrator-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.example.saga.KafkaConsumerFunctions.shippingScheduledConsumer",
+  "bindings" : [ {
+    "type" : "kafkaTrigger",
+    "direction" : "in",
+    "name" : "kafkaTrigger",
+    "dataType" : "string",
+    "topic" : "shipping.scheduled",
+    "consumerGroup" : "saga-orchestrator",
+    "brokerList" : "%KAFKA_BOOTSTRAP_SERVERS%"
+  }, {
+    "type" : "durableClient",
+    "direction" : "in",
+    "name" : "durableClient"
+  } ]
+}
