@@ -13,7 +13,7 @@
     - allowSharedKeyAccess: false ポリシーが適用されているため
       Shared Key 認証を使う Managed Connector は使用不可
 #   - Kafka: Azure Functions (KafkaPublisherFunction / KafkaConsumerFunctions) をブリッジとして使用
-    - ストレージ: Cosmos DB for NoSQL + MSI で代替
+    - ストレージ: Blob Storage （callbacks コンテナー）+ MSI でコールバック URL 保存
 #>
 
 Set-StrictMode -Version Latest
@@ -75,7 +75,6 @@ Write-Host "  KafkaBootstrapServers: $KafkaBootstrapServers" -ForegroundColor Gr
 # ── フェーズ 1: インフラデプロイ (az cli) ──────────────────────
 Write-Host "`n=== Phase 1: インフラデプロイ ===" -ForegroundColor Cyan
 
-$cosmosName        = 'cosmos-ketana-ext2-saga'
 $bridgeStorageName = 'stketanaext2bridge'
 $bridgePlanName    = 'asp-ketana-ext2-bridge'
 $kafkaBridgeName   = 'func-ketana-ext2-kafka-bridge'
@@ -88,19 +87,10 @@ $KafkaBridgeUrl    = "https://$kafkaBridgeName.azurewebsites.net/api/kafka/publi
 $LaApiVersion      = '2019-05-01'
 $LaBaseUri         = "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$LogicAppRG/providers/Microsoft.Logic/workflows"
 
-# 1a. Cosmos DB ─────────────────────────────────────────────────
-Write-Host "  [1a] Cosmos DB 作成中..."
-az cosmosdb create -g $LogicAppRG -n $cosmosName `
-    --kind GlobalDocumentDB `
-    --default-consistency-level Session `
-    --locations regionName=$Location failoverPriority=0 isZoneRedundant=false `
-    --disable-local-auth false | Out-Null
-az cosmosdb sql database create -g $LogicAppRG -a $cosmosName -n sagadb --throughput 400 | Out-Null
-az cosmosdb sql container create -g $LogicAppRG -a $cosmosName -d sagadb -n CallbackUrls `
-    --partition-key-path /orchestrationId --ttl 7200 | Out-Null
-
-$cosmosEndpoint = az cosmosdb show -g $LogicAppRG -n $cosmosName --query documentEndpoint -o tsv
-Write-Host "  Cosmos DB endpoint: $cosmosEndpoint" -ForegroundColor Green
+# 1a. callbacks Blob コンテナー作成 ────────────────────────────────────
+Write-Host "  [1a] Blob コンテナー作成中..."
+# ストレージアカウントは 1b で作成するため、コンテナー作成は 1b の後に行うこと
+$storageAccountUrl = "https://$bridgeStorageName.blob.core.windows.net"
 
 # 1b. Storage Account (一時的に shared key 有効で作成、後で無効化) ────
 # ⚠️ App Service Plan (Linux B1) は japaneast クォータ制限により japanwest で作成する
@@ -181,16 +171,16 @@ function Deploy-LogicApp([string]$Name, [string]$DefFile, [hashtable]$Params) {
 }
 
 Deploy-LogicApp $callbackRegName "$WorkflowsDir\callback-reg.json" @{
-    cosmosDbEndpoint = @{ value = $cosmosEndpoint }
+    storageAccountUrl = @{ value = $storageAccountUrl }
 }
 Deploy-LogicApp $invReservedName "$WorkflowsDir\inv-reserved.json" @{
-    cosmosDbEndpoint = @{ value = $cosmosEndpoint }
+    storageAccountUrl = @{ value = $storageAccountUrl }
 }
 Deploy-LogicApp $invFailedName "$WorkflowsDir\inv-failed.json" @{
-    cosmosDbEndpoint = @{ value = $cosmosEndpoint }
+    storageAccountUrl = @{ value = $storageAccountUrl }
 }
 Deploy-LogicApp $shipSchedName "$WorkflowsDir\ship-sched.json" @{
-    cosmosDbEndpoint = @{ value = $cosmosEndpoint }
+    storageAccountUrl = @{ value = $storageAccountUrl }
 }
 # order-saga は callbackRegistrarUrl が空のまま初回デプロイ（Phase 3 で更新）
 Deploy-LogicApp $orderSagaName "$WorkflowsDir\order-saga.json" @{
@@ -200,20 +190,16 @@ Deploy-LogicApp $orderSagaName "$WorkflowsDir\order-saga.json" @{
 }
 Write-Host "  Logic Apps デプロイ完了" -ForegroundColor Green
 
-# 1f. Cosmos DB SQL ロール付与 ────────────────────────────────────
-Write-Host "  [1f] Cosmos DB SQL ロール付与中..."
-$cosmosId  = "/subscriptions/$SubscriptionId/resourceGroups/$LogicAppRG/providers/Microsoft.DocumentDB/databaseAccounts/$cosmosName"
-$roleDefId = "$cosmosId/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-
+# 1f. Storage Blob Data Contributor ロール付与 ────────────────────
+Write-Host "  [1f] Storage Blob Data Contributor ロール付与中..."
 foreach ($laName in @($callbackRegName, $invReservedName, $invFailedName, $shipSchedName)) {
     $laPrincipalId = az logic workflow show -g $LogicAppRG -n $laName --query 'identity.principalId' -o tsv
-    az cosmosdb sql role assignment create -g $LogicAppRG -a $cosmosName `
-        --role-definition-id $roleDefId `
-        --scope $cosmosId `
-        --principal-id $laPrincipalId | Out-Null
-    Write-Host "    Cosmos role assigned: $laName" -ForegroundColor DarkGray
+    az role assignment create --role 'Storage Blob Data Contributor' `
+        --assignee-object-id $laPrincipalId --assignee-principal-type ServicePrincipal `
+        --scope $storageScope | Out-Null
+    Write-Host "    Storage Blob role assigned: $laName" -ForegroundColor DarkGray
 }
-Write-Host "  Cosmos DB ロール付与完了" -ForegroundColor Green
+Write-Host "  Storage Blob Data Contributor ロール付与完了" -ForegroundColor Green
 # ── フェーズ 1.5: Kafka ブリッジ Function App コードビルド & デプロイ ────────────────
 Write-Host "`n=== Phase 1.5: Kafka ブリッジ Function App ビルド & デプロイ ===" -ForegroundColor Cyan
 
@@ -362,3 +348,4 @@ Write-Host "CALLBACK_REGISTRAR_URL      = $callbackRegUrl"
 Write-Host "`n--- E2E テスト用環境変数 (コピーして spec/0.config.md に反映すること) ---"
 Write-Host "`$env:ORDER_SAGA_URL = `"$orderSagaUrl`""
 Write-Host "`$env:CALLBACK_REGISTRAR_URL = `"$callbackRegUrl`""
+

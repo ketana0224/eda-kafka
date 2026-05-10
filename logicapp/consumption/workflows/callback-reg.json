@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "cosmosDbEndpoint": { "type": "String", "defaultValue": "" }
+    "storageAccountUrl": { "type": "String", "defaultValue": "" }
   },
   "triggers": {
     "manual": {
@@ -26,20 +26,19 @@
       "runAfter": {},
       "inputs": {
         "method": "PUT",
-        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', triggerBody()['orchestrationId'])}",
+        "uri": "@{concat(parameters('storageAccountUrl'), '/callbacks/', triggerBody()['orchestrationId'])}",
         "headers": {
           "Content-Type": "application/json",
-          "x-ms-documentdb-partitionkey": "@{concat('[\"', triggerBody()['orchestrationId'], '\"]')}",
-          "x-ms-documentdb-is-upsert": "true"
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2020-04-08"
         },
         "body": {
-          "id":              "@{triggerBody()['orchestrationId']}",
           "orchestrationId": "@{triggerBody()['orchestrationId']}",
           "callbackUrl":     "@{triggerBody()['callbackUrl']}"
         },
         "authentication": {
           "type": "ManagedServiceIdentity",
-          "audience": "https://cosmos.azure.com"
+          "audience": "https://storage.azure.com"
         }
       }
     },

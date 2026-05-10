@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "cosmosDbEndpoint": { "type": "String", "defaultValue": "" }
+    "storageAccountUrl": { "type": "String", "defaultValue": "" }
   },
   "triggers": {
     "manual": {
@@ -45,13 +45,13 @@
       "runAfter": { "Parse_Kafka_Message": ["Succeeded"] },
       "inputs": {
         "method": "GET",
-        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', body('Parse_Kafka_Message')['orchestrationId'])}",
+        "uri": "@{concat(parameters('storageAccountUrl'), '/callbacks/', body('Parse_Kafka_Message')['orchestrationId'])}",
         "headers": {
-          "x-ms-documentdb-partitionkey": "@{concat('[\"', body('Parse_Kafka_Message')['orchestrationId'], '\"]')}"
+          "x-ms-version": "2020-04-08"
         },
         "authentication": {
           "type": "ManagedServiceIdentity",
-          "audience": "https://cosmos.azure.com"
+          "audience": "https://storage.azure.com"
         }
       }
     },
@@ -76,13 +76,13 @@
       "runAfter": { "Resume_Orchestrator": ["Succeeded"] },
       "inputs": {
         "method": "DELETE",
-        "uri": "@{concat(parameters('cosmosDbEndpoint'), 'dbs/sagadb/colls/CallbackUrls/docs/', body('Parse_Kafka_Message')['orchestrationId'])}",
+        "uri": "@{concat(parameters('storageAccountUrl'), '/callbacks/', body('Parse_Kafka_Message')['orchestrationId'])}",
         "headers": {
-          "x-ms-documentdb-partitionkey": "@{concat('[\"', body('Parse_Kafka_Message')['orchestrationId'], '\"]')}"
+          "x-ms-version": "2020-04-08"
         },
         "authentication": {
           "type": "ManagedServiceIdentity",
-          "audience": "https://cosmos.azure.com"
+          "audience": "https://storage.azure.com"
         }
       }
     }
